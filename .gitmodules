@@ -1,0 +1,3 @@
+[submodule "IPC_Common/third_party/CRCpp"]
+	path = IPC_Common/third_party/CRCpp
+	url = https://github.com/d-bahr/CRCpp
