@@ -13,7 +13,7 @@ namespace ipc_test::common
     class PausableWorker
     {
     public:
-        static const int ELEVATED_PRIORITY = 80;
+        static constexpr int ELEVATED_PRIORITY = 80;
 
         explicit PausableWorker() {}
 
