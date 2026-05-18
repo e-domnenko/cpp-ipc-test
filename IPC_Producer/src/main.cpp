@@ -281,14 +281,13 @@ int main(int argc, char *argv[])
     std::cout << "Successfuly reserved " << shm_size << " bytes of shared memory" << std::endl;
 
     bool error_exit = false;
-    // common::KeyPressListener keyboard;
 
     try
     {
         common::KeyPressListener keyboard;
 
         producer::IPCProducer message_producer(common::SharedRingBuffer(shm_ptr, shm_size), message_size);
-        message_producer.start();
+        message_producer.start(true);
 
         while (true)
         {

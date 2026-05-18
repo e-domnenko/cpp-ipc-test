@@ -4,20 +4,59 @@
 #include <mutex>
 #include <condition_variable>
 #include <thread>
+#include <pthread.h>
+#include <sched.h>
+#include <sys/resource.h>
 
 namespace ipc_test::common
 {
     class PausableWorker
     {
     public:
+        static const int ELEVATED_PRIORITY = 80;
+
         explicit PausableWorker() {}
 
-        void start()
+        void start(bool elevate = false)
         {
             running_ = true;
             worker_ = std::thread(
                 [this]()
                 { run_loop(); });
+
+            if (elevate)
+            {
+                int max_prio = 0;
+                if (getuid() == 0)
+                {
+                    max_prio = sched_get_priority_max(SCHED_FIFO);
+                }
+                else
+                {
+                    struct rlimit lim{};
+                    if (getrlimit(RLIMIT_RTPRIO, &lim) != 0)
+                        lim.rlim_cur = RLIM_INFINITY;
+
+                    max_prio = lim.rlim_cur == RLIM_INFINITY
+                                   ? sched_get_priority_max(SCHED_FIFO)
+                                   : lim.rlim_cur;
+                }
+
+                int selected_prio = std::min(ELEVATED_PRIORITY, max_prio);
+
+                bool is_elevated = false;
+                if (selected_prio > 0)
+                {
+                    sched_param sch{.sched_priority = selected_prio};
+                    if (pthread_setschedparam(worker_.native_handle(), SCHED_FIFO, &sch) == 0)
+                        is_elevated = true;
+                }
+
+                if (!is_elevated)
+                {
+                    std::cerr << "Warning: could not set RT priority, running best-effort" << std::endl;
+                }
+            }
         }
 
         void stop()

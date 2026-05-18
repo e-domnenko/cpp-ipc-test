@@ -167,7 +167,7 @@ int main()
         // Unlink the file to prevent leaking if producer is killed.
         shm_unlink(common::SHM_FILE_NAME);
 
-        message_consumer.start();
+        message_consumer.start(true);
 
         while (true)
         {
