@@ -22,7 +22,19 @@ namespace ipc_test::common
             running_ = true;
             worker_ = std::thread(
                 [this]()
-                { run_loop(); });
+                {
+                    try
+                    {
+                        run_loop();
+                    }
+                    catch (const std::exception &e)
+                    {
+                        std::cerr << e.what() << std::endl;
+                    }
+
+                    worker_.detach();
+                    running_ = false;
+                });
 
             if (elevate)
             {
@@ -61,7 +73,7 @@ namespace ipc_test::common
 
         void stop()
         {
-            running_ = false;
+            stop_requested_ = true;
             resume();
             if (worker_.joinable())
                 worker_.join();
@@ -93,6 +105,8 @@ namespace ipc_test::common
             return paused_;
         }
 
+        bool running() const { return running_; }
+
     protected:
         virtual void run_loop() = 0;
 
@@ -103,11 +117,12 @@ namespace ipc_test::common
                 pause_cond_.wait(lock);
         }
 
-        bool stopped() { return !running_; }
+        bool stopped() const { return stop_requested_ || !running_; }
 
     private:
         std::atomic_bool running_ = false;
         std::atomic_bool paused_ = false;
+        std::atomic_bool stop_requested_ = false;
 
         std::mutex pause_mutex_;
         std::condition_variable pause_cond_;

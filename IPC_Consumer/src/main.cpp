@@ -63,52 +63,89 @@ namespace ipc_test::consumer
                 if (stopped())
                     break;
 
-                try
-                {
-                    auto message_size = ring_buffer_.read_value<size_t>();
+                size_t message_size = 0;
+                size_t size_read = 0;
+                bool size_processed = false;
+                size_t read = 0;
+                size_t metadata_read = 0;
+                uint32_t crc = 0;
+                common::message_metadata message_metadata{};
 
-                    uint32_t crc = 0;
-                    size_t read = 0;
+                while (size_read < sizeof(size_t))
+                {
+                    auto reader = ring_buffer_.request_read(sizeof(size_t));
+
+                    if (reader.empty())
+                    {
+                        if (stopped())
+                            break;
+                        continue;
+                    }
+
+                    size_read = reader.read_value(message_size, size_read);
+                }
+
+                auto payload_size = sizeof(size_t) + message_size + sizeof(common::message_metadata);
+
+                while (metadata_read < sizeof(common::message_metadata))
+                {
+                    if (stopped())
+                        break;
+
+                    auto reader = ring_buffer_.request_read(payload_size - (size_processed ? size_read : 0) - read - metadata_read);
+                    if (reader.empty())
+                    {
+                        break;
+                    }
+
+                    if (!size_processed)
+                    {
+                        reader.skip(sizeof(size_t));
+                        size_processed = true;
+                    }
+
                     while (read < message_size)
                     {
-                        auto chunk = ring_buffer_.request_read(message_size - read);
+                        auto chunk = reader.reader_chunk(message_size - read);
+                        if (chunk.empty())
+                        {
+                            break;
+                        }
+
                         crc = common::crc32(chunk.data(), chunk.size(), crc);
                         read += chunk.size();
-                        ring_buffer_.commit_read(chunk);
                     }
 
-                    auto message_metadata = ring_buffer_.read_value<common::message_metadata>();
-                    messages_read++;
-                    total_messages_read++;
-                    cumulative_message_size += message_size;
-                    if (crc != message_metadata.crc)
-                        invalid_crc++;
-                    if (!first_sequnce_num)
-                        first_sequnce_num = message_metadata.sequence;
-
-                    auto elapsed = std::chrono::steady_clock::now() - round_start_time;
-                    auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
-                    if (elapsed_ms > 1000)
-                    {
-                        auto system_now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
-                        std::cout << std::ctime(&system_now)
-                                  << "Processed " << total_messages_read << " messages" << std::endl
-                                  << static_cast<size_t>(static_cast<float>(messages_read) / elapsed_ms * 1000) << " messages/s; "
-                                  << consumer::humanize_througput(static_cast<float>(cumulative_message_size) / elapsed_ms * 1000) << std::endl
-                                  << "Sequnce numbers from " << first_sequnce_num << " to " << message_metadata.sequence << std::endl
-                                  << "Messages with invalid CRC: " << invalid_crc << std::endl
-                                  << std::endl;
-
-                        round_start_time = std::chrono::steady_clock::now();
-                        messages_read = 0;
-                        first_sequnce_num = 0;
-                        invalid_crc = 0;
-                        cumulative_message_size = 0;
-                    }
+                    metadata_read = reader.read_value(message_metadata);
+                    ring_buffer_.commit_read(reader);
                 }
-                catch (common::ring_buffer_terminated)
+
+                messages_read++;
+                total_messages_read++;
+                cumulative_message_size += message_size;
+                if (crc != message_metadata.crc)
+                    invalid_crc++;
+                if (!first_sequnce_num)
+                    first_sequnce_num = message_metadata.sequence;
+
+                auto elapsed = std::chrono::steady_clock::now() - round_start_time;
+                auto elapsed_ms = std::chrono::duration_cast<std::chrono::milliseconds>(elapsed).count();
+                if (elapsed_ms > 1000)
                 {
-                    break;
+                    auto system_now = std::chrono::system_clock::to_time_t(std::chrono::system_clock::now());
+                    std::cout << std::ctime(&system_now)
+                              << "Processed " << total_messages_read << " messages" << std::endl
+                              << static_cast<size_t>(static_cast<float>(messages_read) / elapsed_ms * 1000) << " messages/s; "
+                              << consumer::humanize_througput(static_cast<float>(cumulative_message_size) / elapsed_ms * 1000) << std::endl
+                              << "Sequnce numbers from " << first_sequnce_num << " to " << message_metadata.sequence << std::endl
+                              << "Messages with invalid CRC: " << invalid_crc << std::endl
+                              << std::endl;
+
+                    round_start_time = std::chrono::steady_clock::now();
+                    messages_read = 0;
+                    first_sequnce_num = 0;
+                    invalid_crc = 0;
+                    cumulative_message_size = 0;
                 }
             }
         }
@@ -162,7 +199,7 @@ int main()
     {
         common::KeyPressListener keyboard;
 
-        consumer::IPCConsumer message_consumer(common::SharedRingBuffer(shm_ptr, shm_size));
+        consumer::IPCConsumer message_consumer(common::SharedRingBuffer(shm_ptr, 0));
 
         // Unlink the file to prevent leaking if producer is killed.
         shm_unlink(common::SHM_FILE_NAME);
@@ -171,6 +208,9 @@ int main()
 
         while (true)
         {
+            if (!message_consumer.running())
+                break;
+
             char key = keyboard.get_key();
 
             if (key)

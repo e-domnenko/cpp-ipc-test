@@ -133,6 +133,7 @@ namespace ipc_test::producer
             std::uniform_int_distribution<unsigned short> rnd_dist(0, 255);
 
             uint32_t sequence = 0;
+            auto payload_size = sizeof(size_t) + message_size_ + sizeof(common::message_metadata);
 
             while (true)
             {
@@ -141,22 +142,43 @@ namespace ipc_test::producer
                 if (stopped())
                     break;
 
-                try
-                {
-                    size_t written = 0;
-                    uint32_t crc = 0;
-                    uint8_t num = 0;
+                size_t size_written = 0;
+                size_t metadata_written = 0;
+                size_t written = 0;
+                uint32_t crc = 0;
 
-                    ring_buffer_.write_value(message_size_);
+                while (metadata_written < sizeof(common::message_metadata))
+                {
+                    if (stopped())
+                        break;
+
+                    auto writer = ring_buffer_.request_write(payload_size);
+
+                    if (writer.empty())
+                    {
+                        break;
+                    }
+
+                    
+                    size_written = writer.write_value(message_size_, size_written);
+                    if (size_written < sizeof(size_t))
+                    {
+                        ring_buffer_.commit_write(writer);
+                        continue;
+                    }
 
                     while (written < message_size_)
                     {
-                        auto chunk = ring_buffer_.request_write(message_size_ - written);
+                        auto chunk = writer.writer_chunk(message_size_ - written);
+                        if (chunk.empty())
+                        {
+                            break;
+                        }
+
                         std::generate(chunk.begin(), chunk.end(), [&rnd_dist, &rng]()
                                       { return static_cast<uint8_t>(rnd_dist(rng)); });
                         crc = common::crc32(chunk.data(), chunk.size(), crc);
                         written += chunk.size();
-                        ring_buffer_.commit_write(chunk);
                     }
 
                     common::message_metadata msg_metadata{
@@ -164,14 +186,12 @@ namespace ipc_test::producer
                         .sequence = ++sequence,
                         .crc = crc,
                     };
-                    ring_buffer_.write_value(msg_metadata);
+                    metadata_written = writer.write_value(msg_metadata, metadata_written);
 
-                    std::this_thread::yield();
+                    ring_buffer_.commit_write(writer);
                 }
-                catch (common::ring_buffer_terminated &e)
-                {
-                    break;
-                }
+
+                std::this_thread::yield();
             }
         }
 
@@ -265,6 +285,8 @@ int main(int argc, char *argv[])
             shm_unlink(common::SHM_FILE_NAME);
             exit(1);
         }
+
+        memset(shm_ptr, 0, shm_size);
     }
 
     if (mlock(shm_ptr, shm_size) == -1)
@@ -292,6 +314,9 @@ int main(int argc, char *argv[])
         while (true)
         {
             char key = keyboard.get_key();
+
+            if (!message_producer.running())
+                break;
 
             if (key)
             {

@@ -1,14 +1,13 @@
-add_library(IPC_Common STATIC
-    src/SharedRingBuffer.cpp)
+add_library(IPC_Common INTERFACE)
 
-target_include_directories(IPC_Common PUBLIC include)
+target_include_directories(IPC_Common INTERFACE include)
 
 find_package(ZLIB MODULE QUIET)
 
 if (ZLIB_FOUND)
-    target_link_libraries(IPC_Common PUBLIC ZLIB::ZLIB)
-    target_compile_definitions(IPC_Common PUBLIC USE_ZLIB)
+    target_link_libraries(IPC_Common INTERFACE ZLIB::ZLIB)
+    target_compile_definitions(IPC_Common INTERFACE USE_ZLIB)
 else()
     set(CRCPP_INCLUDE_DIR "${CMAKE_CURRENT_SOURCE_DIR}/third_party/CRCpp/inc")
-    target_include_directories(IPC_Common SYSTEM PUBLIC $<BUILD_INTERFACE:${CRCPP_INCLUDE_DIR}>)
+    target_include_directories(IPC_Common SYSTEM INTERFACE $<BUILD_INTERFACE:${CRCPP_INCLUDE_DIR}>)
 endif()
